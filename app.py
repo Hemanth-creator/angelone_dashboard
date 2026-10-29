@@ -26,6 +26,7 @@ from historical import fetch_avg_volume_20d, fetch_opening_range, SessionExpired
 from ist_time import now_ist, market_open_today, market_close_today, is_market_hours, is_trading_day
 from recommend import recommended, update_seen, seen_table, reset_seen
 from vwap_slope import record_vwap, vwap_slopes, reset_history
+from ema_slope import record_ltp, ema_slopes, reset_history as reset_ema_history
 from movers import early_movers, update_em_seen, em_seen_table, reset_em_seen
 from firstpush import first_push
 import screeners as scr
@@ -87,7 +88,7 @@ def style_table(df: pd.DataFrame, pct_cols: list[str]):
             fmt[col] = "{:,.1f}"
         elif col == "rvol":
             fmt[col] = "{:.2f}x"
-        elif col in ("vwap_angle", "first_angle"):
+        elif col in ("vwap_angle", "first_angle", "ema_angle"):
             fmt[col] = "{:+.1f}°"
         elif col == "day_range_pos":
             fmt[col] = "{:.0f}%"
@@ -135,6 +136,11 @@ slope_window = st.sidebar.slider("Slope window (minutes)", 5, 30, 10, step=5,
                                  help="How many recent minutes of VWAP the slope line is fitted to.")
 flat_angle = st.sidebar.slider("Flat zone: ± angle (degrees)", 3, 30, 10,
                                help="VWAP angles between -X° and +X° count as Flat.")
+st.sidebar.markdown("**20 EMA slope**")
+ema_period = st.sidebar.slider("EMA period (ticks)", 5, 50, 20, step=5,
+                               help="Number of recent price ticks the EMA is computed over. "
+                                    "The angle-fitting window and flat-zone threshold above (VWAP slope) "
+                                    "are reused here so both angles are on the same scale.")
 st.sidebar.markdown("**Early Movers tab**")
 em_max_move = st.sidebar.slider("Max day move so far (±%)", 0.5, 5.0, 2.0, step=0.5,
                                 help="Only stocks that haven't made their big move yet.")
@@ -161,6 +167,8 @@ if st.sidebar.button("🗑 Reset 'Seen today' log"):
     reset_seen()
 if st.sidebar.button("🗑 Reset VWAP slope history"):
     reset_history()
+if st.sidebar.button("🗑 Reset 20 EMA slope history"):
+    reset_ema_history()
 if st.sidebar.button("🗑 Reset 'Early Movers seen' log"):
     reset_em_seen()
 if st.sidebar.button("🗑 Reset 'Opening Reversals seen' log"):
@@ -333,6 +341,11 @@ def live_panel():
     slopes = vwap_slopes(vwap_hist, window_min=slope_window, flat_deg=flat_angle)
     live = live.merge(slopes[["name", "vwap_angle", "vwap_trend"]], on="name", how="left")
 
+    # 20 EMA slope: same idea, but on price (LTP) rather than VWAP.
+    ltp_hist = record_ltp(live, record=market_open)
+    ema_slope_df = ema_slopes(ltp_hist, period=ema_period, window_min=slope_window, flat_deg=flat_angle)
+    live = live.merge(ema_slope_df[["name", "ema_angle", "ema_trend"]], on="name", how="left")
+
     rec = recommended(live, avg_volume, n=row_count, min_rvol=rvol_threshold, min_lists=min_lists,
                       min_vwap_dev=vwap_threshold)
     # Log picks only while the market is open, so after-hours snapshots don't pollute the day's log.
@@ -456,11 +469,12 @@ def live_panel():
         em_seen_df = em_seen_table(em_seen, live, long_df, short_df)
         st.markdown("### 🕘 Early Movers Seen Today")
         st.caption("Every stock that has appeared in Long or Short watch today, newest first. It stays here "
-                   "after dropping out of the tables above (**status** = Dropped). **since_first_pct** = price "
-                   "change since it first appeared; **in_side_pct** = same, but + means it moved the way the "
-                   "watch predicted (up for Long, down for Short). **first_angle** = VWAP angle when it first "
-                   "appeared; **vwap_angle / vwap_trend** = the VWAP angle and trend *now* (Rising / Falling / "
-                   "Flat), so you can see if the trend behind a pick has faded. Logged only while the market is open.")
+                   "after dropping out of the tables above (**status** = Dropped). **ema_angle** = current "
+                   "20 EMA slope angle; **vwap_angle / vwap_trend** = the VWAP angle and trend *now* (Rising / "
+                   "Falling / Flat). **since_first_pct** = price change since it first appeared; **in_side_pct** "
+                   "= same, but + means it moved the way the watch predicted (up for Long, down for Short). "
+                   "**first_angle** = VWAP angle when it first appeared, so you can see if the trend behind a "
+                   "pick has faded. Logged only while the market is open.")
 
         em_signal_options = sorted({
             sig.strip() for sigs in em_seen_df["signals_when_first"].dropna()
@@ -478,10 +492,10 @@ def live_panel():
             )]
 
         show("", em_seen_df,
-             ["since_first_pct", "in_side_pct", "first_angle", "vwap_angle"],
-             cols=["name", "signals_when_first", "side", "status", "first_seen", "last_seen", "first_price",
-                   "ltp", "since_first_pct", "in_side_pct", "first_angle", "vwap_angle", "vwap_trend",
-                   "max_score", "refreshes"],
+             ["since_first_pct", "in_side_pct", "first_angle", "vwap_angle", "ema_angle"],
+             cols=["name", "side", "ema_angle", "vwap_angle", "status", "first_seen", "last_seen",
+                   "first_price", "ltp", "since_first_pct", "in_side_pct", "first_angle", "vwap_trend",
+                   "max_score", "refreshes", "signals_when_first"],
              empty_msg="Nothing matches this filter. Try selecting more signals above, or nothing was "
                        "logged yet (recorded while the market is open, 09:15–15:30 IST).",
              max_rows=15)

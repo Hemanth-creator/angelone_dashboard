@@ -139,8 +139,8 @@ from ist_time import now_ist, today_ist_str
 
 _CACHE_DIR = Path(__file__).parent / ".cache"
 
-EM_SEEN_COLS = ["name", "side", "status", "first_seen", "last_seen", "first_price", "ltp",
-                "since_first_pct", "in_side_pct", "first_angle", "vwap_angle", "vwap_trend",
+EM_SEEN_COLS = ["name", "side", "ema_angle", "vwap_angle", "status", "first_seen", "last_seen",
+                "first_price", "ltp", "since_first_pct", "in_side_pct", "first_angle", "vwap_trend",
                 "max_score", "refreshes", "signals_when_first"]
 
 
@@ -206,6 +206,7 @@ def em_seen_table(seen: dict, live: pd.DataFrame, long_df: pd.DataFrame, short_d
     px = lv["ltp"]
     ang = lv["vwap_angle"] if "vwap_angle" in lv.columns else pd.Series(dtype=float)
     trd = lv["vwap_trend"] if "vwap_trend" in lv.columns else pd.Series(dtype=object)
+    ema_ang = lv["ema_angle"] if "ema_angle" in lv.columns else pd.Series(dtype=float)
     on = {("Long", n) for n in long_df["name"]} | {("Short", n) for n in short_df["name"]}
     rows = []
     for e in seen.values():
@@ -215,12 +216,13 @@ def em_seen_table(seen: dict, live: pd.DataFrame, long_df: pd.DataFrame, short_d
         sign = -1 if e["side"] == "Short" else 1
         rows.append({
             "name": e["name"], "side": e["side"],
+            "ema_angle": ema_ang.get(e["name"], np.nan),
+            "vwap_angle": ang.get(e["name"], np.nan),
             "status": "On list" if (e["side"], e["name"]) in on else "Dropped",
             "first_seen": e["first_seen"], "last_seen": e.get("last_seen", e["first_seen"]),
             "first_price": first, "ltp": ltp, "since_first_pct": since,
             "in_side_pct": since * sign if pd.notna(since) else np.nan,
             "first_angle": e.get("first_angle"),
-            "vwap_angle": ang.get(e["name"], np.nan),
             "vwap_trend": trd.get(e["name"], "-") if pd.notna(trd.get(e["name"], np.nan)) else "-",
             "max_score": e["max_score"], "refreshes": e["refreshes"],
             "signals_when_first": e["signals_when_first"],
